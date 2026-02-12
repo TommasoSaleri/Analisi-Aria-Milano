@@ -8,26 +8,43 @@ from streamlit_folium import st_folium
 from data_processing import create_database
 import os
 
-# Controllo database
+# Controllo se esiste già il database elaborato; in caso contrario, richiamo la funzione per crearlo
 if not os.path.exists("dati.json"):
     create_database()
 
+
 @st.cache_data
 def load_data():
+    # carico i dati dal file json e preparo il dataframe
     try:
+        # apro il file json in modalità lettura
         with open("dati.json", "r", encoding="utf8") as file:
             dati_json = json.load(file)
+
+        #converto i dati in un dataframe pandas
         df = pd.DataFrame(dati_json)
+
+        # converto la colonna data nel formato datetime gestibile dal sistema
         df["data"] = pd.to_datetime(df["data"], errors="coerce")
+
+        # rimuovo eventuali record con valori mancanti (null)
         df = df.dropna(subset=["valore"])
         return df
     except FileNotFoundError:
         st.error("❌ File 'dati.json' non trovato.")
         return pd.DataFrame()
 
+# eseguo il caricamento dei dati
 df = load_data()
+
+# se il dataframe è vuoto, ri-eseguo la creazione del database e del dataframe
 if df.empty:
-    st.stop()
+    create_database()
+    df = load_data()
+    
+    # se l'errore persiste, interrompo l'app
+    if df.empty:
+        st.stop()
 
 # ---------------------------------------------------------
 # 1. HEADER E SELEZIONE
@@ -35,6 +52,7 @@ if df.empty:
 
 st.title("Analisi Qualità dell'Aria a Milano")
 
+# estraggo la lista univoca degli inquinanti presenti nel dataset per il menu a scelta
 inquinanti = sorted(df["inquinante"].unique())
 inquinante_scelto = st.selectbox("🔍 Seleziona un inquinante da analizzare", inquinanti)
 
@@ -42,6 +60,7 @@ inquinante_scelto = st.selectbox("🔍 Seleziona un inquinante da analizzare", i
 # 2. SEZIONE DINAMICA: ESPLORA L'INQUINANTE
 # ---------------------------------------------------------
 
+# dizionario contenente le informazioni per ogni inquinante
 descrizioni = {
     "C6H6": """
 **COS'È:** Il benzene è un VOC (Composto Organico Volatile). Evapora facilmente e si disperde nell’aria. Molti VOC sono tossici e cancerogeni.
@@ -136,6 +155,7 @@ descrizioni = {
 """
 }
 
+# mostro un riquadro espandibile con le informazioni relative all'inquinante selezionato
 with st.expander(f"📖 Focus Inquinante: {inquinante_scelto}", expanded=True):
     info = descrizioni.get(inquinante_scelto, "Informazioni non disponibili per questo inquinante.")
     st.markdown(info)
@@ -145,15 +165,24 @@ with st.expander(f"📖 Focus Inquinante: {inquinante_scelto}", expanded=True):
 # ---------------------------------------------------------
 
 st.subheader("📍 Localizzazione delle stazioni")
+
+# estraggo le coordinate geografiche univoche per le stazioni che misurano l'inquinante scelto
+
+# estraiamo solo le righe in cui la colonna "inquinante" corrisponde a quello scelto e la copiamo per evitare di modificare i dati
 df_coord = df[df["inquinante"] == inquinante_scelto][["nome_stazione", "coordinate"]].copy()
+
+# estraiamo da ogni cella della colonna "coordinate" latitudine e longitudine tramite la funzione lambada
 df_coord["lon"] = df_coord["coordinate"].apply(lambda x: x[0])
 df_coord["lat"] = df_coord["coordinate"].apply(lambda x: x[1])
+
+# dataframe pulito con nome delle stazioni e coordinate estratte (no duplicati)
 df_coord = df_coord[["nome_stazione", "lat", "lon"]].drop_duplicates()
 
 def crea_mappa(data):
-    # Creazione mappa base centrata sulla media delle coordinate
+    # creazione mappa base centrata sulla media delle coordinate
     m = folium.Map(location=[data["lat"].mean(), data["lon"].mean()], zoom_start=11, tiles="cartodbpositron", dragging=False, zoom_control=True, scrollWheelZoom=False, doubleClickZoom=False)
 
+    # aggiungo un marker per ogni stazione trovata
     for i in range(len(data)):
         riga_corrente = data.iloc[i]
         latitudine = riga_corrente["lat"]
@@ -168,6 +197,7 @@ def crea_mappa(data):
         ).add_to(m)
     return m
 
+# visualizzo la mappa nell'interfaccia
 st_folium(crea_mappa(df_coord), width=700, height=400, returned_objects=[])
 st.divider()
 
@@ -176,28 +206,41 @@ st.divider()
 # ---------------------------------------------------------
 
 st.header(f"Andamento storico: {inquinante_scelto}")
+
+# raggruppo i dati per anno calcolando il valore medio dell'inquinante
 df_anno = df[df["inquinante"] == inquinante_scelto].groupby("anno")["valore"].mean().reset_index()
 
-fig, ax = plt.subplots(figsize=(10, 4))
-sns.lineplot(data=df_anno, x="anno", y="valore", marker="o", color="#156D96", ax=ax)
-ax.set_ylabel("µg/m³")
-st.pyplot(fig)
+# grafico a linee per mostrare l'evoluzione negli anni
+
+# cornice del grafico (spazio dedicato, fig1) e grafico (assi e etichette, ax1)
+fig1, ax1 = plt.subplots(figsize=(10, 4))
+sns.lineplot(data=df_anno, x="anno", y="valore", marker="o", color="#156D96", ax=ax1)
+
+#aggiungo linee orizzontali al grafico
+ax1.grid(axis='y', linestyle='-', alpha=0.7)
+
+ax1.set_ylabel("µg/m³")
+st.pyplot(fig1)
 
 # Logica Trend
-# 1. Recuperiamo il primo valore della serie (l'inizio del periodo)
+# 1. primo valore della serie (l'inizio del periodo)
 valore_iniziale = df_anno["valore"].iloc[0]
 
-# 2. Recuperiamo l'ultimo valore della serie (la fine del periodo)
-# Usiamo -1 per indicare l'ultima posizione della lista
+# 2. ultimo valore della serie (la fine del periodo)
 valore_finale = df_anno["valore"].iloc[-1]
 
-# 3. Confrontiamo i due valori
+# 3. calcolo variazione percentuale
+variazione = ((valore_finale - valore_iniziale) / valore_iniziale) * 100
+
+# 4. Confrontiamo i due valori
 if valore_finale < valore_iniziale:
-    trend = "MIGLIORAMENTO"
+    trend = f"MIGLIORAMENTO ({variazione:.1f}%)"
     color = "green"
 else:
-    trend = "PEGGIORAMENTO"
+    trend = f"PEGGIORAMENTO (+{variazione:.1f}%)"
     color = "red"
+
+# stampo lo stato del trend con formattazione colorata
 st.markdown(f"Stato: <span style='color:{color}'>**{trend}**</span> dal {df_anno['anno'].min()} al {df_anno['anno'].max()}", unsafe_allow_html=True)
 
 st.divider()
@@ -207,42 +250,48 @@ st.divider()
 # ---------------------------------------------------------
 
 st.header("Classifica Criticità")
+
+# calcolo la media storica per ogni singola stazione
 df_staz = df[df["inquinante"] == inquinante_scelto].groupby("nome_stazione")["valore"].mean().reset_index()
+
+# seleziono le 5 stazioni con i valori medi più alti
 top5 = df_staz.sort_values(by="valore", ascending=False).head(5)
 
+# organizzo la visualizzazione in due colonne
 col1, col2 = st.columns([3, 2])
 
 with col1:
-    # L'altezza totale della figura (4) rimane fissa
-    fig2, ax2 = plt.subplots(figsize=(8, 6)) 
+    # grafico a barre orizzontali per la classifica
+    fig2, ax2 = plt.subplots(figsize=(8, 6))
+
+    # calcolo la larghezza delle barre in base agli elementi disposti
     if len(top5) >= 3:
-        sns.barplot(
-            data=top5, 
-            x="valore", 
-            y="nome_stazione", 
-            palette="Blues_r", 
-            ax=ax2,
-            width=0.7
-        )
+        w = 0.7
     else:
-        sns.barplot(
-            data=top5, 
-            x="valore", 
-            y="nome_stazione", 
-            palette="Blues_r", 
-            ax=ax2,
-            width=0.3
-        )
+        w = 0.3
+    
+    sns.barplot(
+        data=top5, 
+        x="valore", 
+        y="nome_stazione", 
+        palette="Blues_r", 
+        ax=ax2,
+        width=w
+    )
     
     ax2.set_title("Stazioni con media più alta")
     ax2.set_xlabel("Valore medio (µg/m³)")
     ax2.set_ylabel("")
+
+    # rimuovo bordi del grafico
+    sns.despine(left=True, bottom=True)
     
     st.pyplot(fig2)
 
 with col2:
+    # tabella numerica dei dati medi
     st.write("### Dati medi")
-    st.dataframe(top5.rename(columns={"nome_stazione": "Stazione", "valore": "Media"}), hide_index=True)
+    st.dataframe(top5.rename(columns={"nome_stazione": "Stazione", "valore": "Media (µg/m³)"}).style.format({"Media (µg/m³)": "{:.2f}"}), hide_index=True)
 
 # ---------------------------------------------------------
 # 6. DETTAGLIO ANNUALE
@@ -251,16 +300,18 @@ with col2:
 st.header("📅 Dettaglio annuale")
 
 # 1. Selezione dell'anno
+# filtro gli anni disponibili per l'inquinante selezionato
 anni_disponibili = sorted(df[df["inquinante"] == inquinante_scelto]["anno"].unique(), reverse=True)
 anno_scelto = st.selectbox("Seleziona l'anno da analizzare", anni_disponibili)
 
-# 2. Selezione della stazione (filtrata per inquinante E anno scelto)
+# 2. Selezione della stazione
+# filtro le stazioni che hanno registrato dati per quell'inquinante in quell'anno specifico
 stazioni_disponibili = sorted(
     df[(df["inquinante"] == inquinante_scelto) & (df["anno"] == anno_scelto)]["nome_stazione"].unique()
 )
 stazione_scelta = st.selectbox("Seleziona stazione per il dettaglio", stazioni_disponibili)
 
-# 3. Filtro finale dei dati
+# 3. estraggo i dati giornalieri per la combinazione scelta
 df_focus = df[
     (df["anno"] == anno_scelto) & 
     (df["nome_stazione"] == stazione_scelta) & 
@@ -271,6 +322,7 @@ df_focus = df[
 if not df_focus.empty:
     fig3, ax3 = plt.subplots(figsize=(10, 4))
     sns.lineplot(data=df_focus, x="data", y="valore", color="#156D96", ax=ax3)
+    ax3.grid(axis='y', color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
     ax3.set_title(f"Andamento giornaliero {inquinante_scelto} - {stazione_scelta} ({anno_scelto})")
     ax3.set_ylabel("µg/m³")
     st.pyplot(fig3)
