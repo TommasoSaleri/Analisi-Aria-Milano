@@ -1,7 +1,7 @@
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+import seaborn as sb
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
@@ -214,7 +214,7 @@ df_anno = df[df["inquinante"] == inquinante_scelto].groupby("anno")["valore"].me
 
 # cornice del grafico (spazio dedicato, fig1) e grafico (assi e etichette, ax1)
 fig1, ax1 = plt.subplots(figsize=(10, 4))
-sns.lineplot(data=df_anno, x="anno", y="valore", marker="o", color="#156D96", ax=ax1)
+sb.lineplot(data=df_anno, x="anno", y="valore", marker="o", color="#156D96", ax=ax1)
 
 #aggiungo linee orizzontali al grafico
 ax1.grid(axis='y', linestyle='-', alpha=0.7)
@@ -270,7 +270,7 @@ with col1:
     else:
         w = 0.3
     
-    sns.barplot(
+    sb.barplot(
         data=top5, 
         x="valore", 
         y="nome_stazione", 
@@ -284,7 +284,7 @@ with col1:
     ax2.set_ylabel("")
 
     # rimuovo bordi del grafico
-    sns.despine(left=True, bottom=True)
+    sb.despine(left=True, bottom=True)
     
     st.pyplot(fig2)
 
@@ -306,9 +306,7 @@ anno_scelto = st.selectbox("Seleziona l'anno da analizzare", anni_disponibili)
 
 # 2. Selezione della stazione
 # filtro le stazioni che hanno registrato dati per quell'inquinante in quell'anno specifico
-stazioni_disponibili = sorted(
-    df[(df["inquinante"] == inquinante_scelto) & (df["anno"] == anno_scelto)]["nome_stazione"].unique()
-)
+stazioni_disponibili = sorted(df[(df["inquinante"] == inquinante_scelto) & (df["anno"] == anno_scelto)]["nome_stazione"].unique())
 stazione_scelta = st.selectbox("Seleziona stazione per il dettaglio", stazioni_disponibili)
 
 # 3. estraggo i dati giornalieri per la combinazione scelta
@@ -321,7 +319,7 @@ df_focus = df[
 # 4. Visualizzazione del grafico
 if not df_focus.empty:
     fig3, ax3 = plt.subplots(figsize=(10, 4))
-    sns.lineplot(data=df_focus, x="data", y="valore", color="#156D96", ax=ax3)
+    sb.lineplot(data=df_focus, x="data", y="valore", color="#156D96", ax=ax3)
     ax3.grid(axis='y', color='gray', linestyle='-', linewidth=0.5, alpha=0.5)
     ax3.set_title(f"Andamento giornaliero {inquinante_scelto} - {stazione_scelta} ({anno_scelto})")
     ax3.set_ylabel("µg/m³")
